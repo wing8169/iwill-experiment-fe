@@ -6,11 +6,15 @@ export const WebcamCapture = () => {
   const webcamRef = useRef(null);
   const [imgSrc, setImgSrc] = useState(null);
   const [imgData, setImgData] = useState(null);
-  const [qrCodeData, setQrCodeData] = useState("");
+  const [qrCodeData, setQrCodeData] = useState("No QR Code Found.");
+  const [qrCodeData2, setQrCodeData2] = useState("No QR Code Found.");
+
+  // initialize worker in background
+  const qrWorker = new Worker("./workers/qr-worker.js");
 
   // convert base64 image to ImageData by using canvas 2D context getImageData method
   const imgToImageData = (dataUri) => {
-    const canvas = document.querySelector("canvas");
+    const canvas = document.getElementById("screenshotCanvas");
     const ctx = canvas.getContext("2d");
 
     const image = new Image();
@@ -35,9 +39,9 @@ export const WebcamCapture = () => {
     const code = jsQR(imgData.data, 640, 480);
 
     if (code && code.data) {
-      setQrCodeData(code.data);
+      setQrCodeData("QR Code Found: " + code.data);
     } else {
-      setQrCodeData("");
+      setQrCodeData("No QR Code Found.");
     }
   }, [imgData]);
 
@@ -55,6 +59,62 @@ export const WebcamCapture = () => {
         height={480}
         ref={webcamRef}
         screenshotFormat="image/png"
+        onUserMedia={(streamData) => {
+          const track = streamData.getVideoTracks()[0];
+          const trackSetting = track.getSettings();
+          const canvas = document.getElementById("videoCanvas");
+          canvas.height = trackSetting.height;
+          canvas.width = trackSetting.width;
+          const canvasContext = canvas.getContext("2d");
+
+          // draw stream on a video element
+          const video = document.getElementById("video");
+          video.srcObject = streamData;
+          video.play();
+
+          // action when message is received
+          qrWorker.addEventListener("message", ({ data }) => {
+            if (data) {
+              // Data from QR code available
+              //
+              // Handle a successful scan here.
+              if (data && data.data) {
+                setQrCodeData2("QR Code Found: " + data.data);
+              } else {
+                setQrCodeData2("No QR Code Found.");
+              }
+              tick();
+            } else {
+              // No QR code detected in this frame
+              //
+              // Feed the next frame to the QR worker
+              // now (this code is introduced below).
+              setQrCodeData2("No QR Code Found.");
+              tick();
+            }
+          });
+
+          // post message to qr worker
+          const updateJsQr = () => {
+            canvasContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageData = canvasContext.getImageData(
+              0,
+              0,
+              canvas.width,
+              canvas.height
+            );
+            qrWorker.postMessage({
+              data: imageData,
+              height: canvas.height,
+              width: canvas.width,
+            });
+          };
+
+          // trigger updateJsQr function
+          const tick = () => requestAnimationFrame(updateJsQr);
+
+          tick();
+        }}
       />
       <button
         style={{
@@ -87,7 +147,17 @@ export const WebcamCapture = () => {
           {qrCodeData}
         </p>
       </div>
-      <canvas width="640" height="480" hidden={true} />
+      <canvas id="screenshotCanvas" width="640" height="480" hidden={true} />
+      <canvas id="videoCanvas" width="640" height="480" hidden={true} />
+      <h3>QR Code Scanning by Real Time Video</h3>
+      <video id="video" width="640" height="480" />
+      <p
+        style={{
+          marginTop: 20,
+        }}
+      >
+        {qrCodeData2}
+      </p>
     </div>
   );
 };
